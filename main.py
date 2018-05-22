@@ -6,6 +6,7 @@ from distutils.version import LooseVersion
 import project_tests as tests
 import math
 from tqdm import tqdm
+import numpy as np
 # Check TensorFlow Version
 assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFlow version 1.0 or newer.  You are using {}'.format(tf.__version__)
 print('TensorFlow Version: {}'.format(tf.__version__))
@@ -40,11 +41,6 @@ def load_vgg(sess, vgg_path):
     layer4_out = graph.get_tensor_by_name(vgg_layer4_out_tensor_name)
     layer7_out = graph.get_tensor_by_name(vgg_layer7_out_tensor_name)
 
-    #STOP GRADIENT FROM BACKPROPAGATING
-    # layer7_out = tf.stop_gradient(layer7_out)
-    # layer4_out = tf.stop_gradient(layer4_out)
-    # layer3_out = tf.stop_gradient(layer3_out)
-
     return image_input, keep_prob, layer3_out, layer4_out, layer7_out
 tests.test_load_vgg(load_vgg, tf)
 
@@ -62,32 +58,60 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
     #CHANGE THE DEPTH BY USING 1X1 
     # with tf.name_scope('Transpose_Layers'):
     weights_initializer_stddev = 0.01
-    t_conv = tf.layers.conv2d_transpose(vgg_layer7_out, num_classes, 1, 1, 
-                                        padding="SAME", 
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer,
-                                        name='trans_layer1')
-    #UPSAMPLE BY FACTOR OF 2
-    t_conv1 = tf.layers.conv2d_transpose(t_conv, num_classes, 3, 2, 
-                                        padding="SAME", 
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer,
-                                        name='trans_layer2')
-    #UPSAMPLE BY FACTOR OF 2                                    
-    t_conv2 = tf.layers.conv2d_transpose(t_conv1, num_classes, 3, 2, 
-                                        padding="SAME", 
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer,
-                                        name='trans_layer3')
-    #UPSAMPLE BY FACTOR OF 4                                        
-    t_conv3 = tf.layers.conv2d_transpose(t_conv2, num_classes, 3, 4, 
-                                        padding="SAME", 
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer,
-                                        name='trans_layer4')
-    #UPSAMPLE BY FACTOR OF 2                                        
-    t_conv4 = tf.layers.conv2d_transpose(t_conv3, num_classes, 3, 2, 
-                                        padding="SAME", 
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer, 
-                                        kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
-                                        name='trans_layer5')                                        
-    return t_conv4
+    weights_regularized_l2 = 1e-3
+    # TODO: Implement function
+    # Convolutional 1x1 to mantain space information.
+    t_conv1 = tf.layers.conv2d(vgg_layer7_out,
+                                     num_classes,
+                                     1, # kernel_size
+                                     padding = 'same',
+                                     kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
+                                     kernel_regularizer= tf.contrib.layers.l2_regularizer(weights_regularized_l2),
+                                     name='t_conv1')
+    # Upsample deconvolution x 2
+    t_conv2 = tf.layers.conv2d_transpose(t_conv1,
+                                                  num_classes,
+                                                  3, # kernel_size
+                                                  strides= (2, 2),
+                                                  padding= 'same',
+                                                  kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
+                                                  kernel_regularizer= tf.contrib.layers.l2_regularizer(weights_regularized_l2),
+                                                  name='t_conv2')
+    conv_4 = tf.layers.conv2d(vgg_layer4_out,
+                                     num_classes,
+                                     1, # kernel_size
+                                     padding = 'same',
+                                     kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
+                                     kernel_regularizer= tf.contrib.layers.l2_regularizer(weights_regularized_l2),
+                                     name='t_conv2_prev')
+    # Adding skip layer.
+    first_skip = tf.add(t_conv2, conv_4, name='first_skip')
+    # Upsample deconvolutions x 2.
+    t_conv3 = tf.layers.conv2d_transpose(first_skip,
+                                                   num_classes,
+                                                   4, # kernel_size
+                                                   strides= (2, 2),
+                                                   padding= 'same',
+                                                   kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
+                                                   kernel_regularizer= tf.contrib.layers.l2_regularizer(weights_regularized_l2),
+                                                   name='t_conv3')
+    t_conv3_prev = tf.layers.conv2d(vgg_layer3_out,
+                                     num_classes,
+                                     1, # kernel_size
+                                     padding = 'same',
+                                     kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
+                                     kernel_regularizer= tf.contrib.layers.l2_regularizer(weights_regularized_l2),
+                                     name='t_conv3_prev')
+    # Adding skip layer.
+    second_skip = tf.add(t_conv3, t_conv3_prev, name='second_skip')
+    # Upsample deconvolution x 8.
+    third_upsamplex8 = tf.layers.conv2d_transpose(second_skip, num_classes, 16,
+                                                  strides= (8, 8),
+                                                  padding= 'same',
+                                                  kernel_initializer = tf.random_normal_initializer(stddev=weights_initializer_stddev),
+                                                  kernel_regularizer= tf.contrib.layers.l2_regularizer(weights_regularized_l2),
+                                                  name='third_upsamplex8')
+    return third_upsamplex8
 tests.test_layers(layers)
 
 
@@ -129,16 +153,15 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
     """
     # TODO: Implement function
     sess.run(tf.global_variables_initializer())
-    batch_count = int(math.ceil(300/batch_size))
 
     for epoch  in range(epochs):
-        batches_pbar = tqdm(range(batch_count), desc = "Epoch {:>2}/{}".format(epoch+1, epochs),unit='batches')
-
-        for batch in batches_pbar:
-            batch_image, batch_gt = (get_batches_fn(batch_size))
-            sess.run(train_op, feed_dict={input_image: batch_image, correct_label: batch_gt, keep_prob: 0.5})
+        loss_epoch = []
+        print("Epoch is", epoch)
+        for batch_image, batch_gt in get_batches_fn(batch_size):
+            sess.run(train_op, feed_dict={input_image: batch_image, correct_label: batch_gt, keep_prob: 0.60})
             loss_val = sess.run(cross_entropy_loss, feed_dict={input_image: batch_image, correct_label: batch_gt, keep_prob: 1})
-            print(loss_val)
+            loss_epoch.append(loss_val)
+        print("Loss is ", np.mean(loss_epoch))
 tests.test_train_nn(train_nn)
 
 
@@ -148,9 +171,9 @@ def run():
     data_dir = './data'
     runs_dir = './runs'
     tests.test_for_kitti_dataset(data_dir)
-    learning_rate = 0.001
-    epochs = 1
-    batch_size = 1
+    learning_rate = 0.0002
+    epochs = 25
+    batch_size = 16
     keep_prob = 0.5
     # Download pretrained vgg model
     helper.maybe_download_pretrained_vgg(data_dir)
@@ -181,7 +204,7 @@ def run():
              correct_label, keep_prob, learning_rate)
 
         # TODO: Save inference data using helper.save_inference_samples
-        #  helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, input_image)
+        helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, image_input)
 
         # OPTIONAL: Apply the trained model to a video
 
