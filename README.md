@@ -1,7 +1,7 @@
 # Semantic Segmentation
 ### Introduction
 In this project, you'll label the pixels of a road in images using a Fully Convolutional Network (FCN).
-(https://github.com/Keshav-Aggarwal/Sementic-Segmentation/blob/master/run/1526962466.821251/uu_000058.png)
+![Image1](https://github.com/Keshav-Aggarwal/Sementic-Segmentation/blob/master/run/1526962466.821251/uu_000058.png)
 ### Setup
 ##### GPU
 `main.py` will check to make sure you are using GPU - if you don't have a GPU on your system, you can use AWS or another cloud computing platform.
